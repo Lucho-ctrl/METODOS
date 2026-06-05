@@ -27,6 +27,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 # Import numerical core from main_app
 from main_app import (
     punto_fijo_sistema,
+    norma_jacobiana,
     build_G,
     EJEMPLOS
 )
@@ -83,6 +84,9 @@ class MainApplication(tk.Tk):
         self.last_errors = None
         self.last_historial = None
         self.canvas_widget = None
+        self.last_jacobian = None
+        self.last_jacobian_norm = None
+        self.last_var_names = None
         
         self._build_ui()
     
@@ -220,8 +224,8 @@ CÓMO USAR:
     def _section_solver(self):
         """Display the interactive solver section.
         
-        Provides input fields for functions G₁ and G₂, initial values,
-        and numerical parameters. Includes execution button and result display.
+        Provides input fields for functions G_i(x), initial values,
+        and numerical parameters. Supports n-dimensional systems.
         """
         frame = tk.Frame(self.content_frame, bg=BG)
         frame.pack(fill="both", expand=True, padx=20, pady=20)
@@ -232,30 +236,37 @@ CÓMO USAR:
         # Instructions
         info_frame = tk.Frame(frame, bg=SURFACE, bd=0, relief="flat")
         info_frame.pack(fill="x", pady=(0, 15))
-        tk.Label(info_frame, text="ℹ  Ingresa G₁(x,y) y G₂(x,y)\n"
+        tk.Label(info_frame, text="ℹ  Ingresa el número de funciones y luego las expresiones G_i\n"
                                  "   Operadores: + - * / ** sqrt() exp() log() sin() cos() tan() abs()",
                 bg=SURFACE, fg=TEXT_MUTED, font=("Segoe UI", 9), justify="left",
                 wraplength=800).pack(padx=12, pady=8, anchor="w")
         
-        # Input fields
-        campo_frame = tk.Frame(frame, bg=BG)
-        campo_frame.pack(fill="x", pady=(0, 15))
+        # Number of functions input
+        num_func_frame = tk.Frame(frame, bg=BG)
+        num_func_frame.pack(fill="x", pady=(0, 15))
         
-        def campo(parent, label, row, placeholder, var_name):
-            tk.Label(parent, text=label, bg=BG, fg=TEXT, font=FONT_HEAD,
-                    width=12, anchor="e").grid(row=row, column=0, padx=(0,10), pady=6, sticky="e")
-            sv = tk.StringVar(value=placeholder)
-            e = tk.Entry(parent, textvariable=sv, bg=SURFACE2, fg=ACCENT,
-                        font=("Consolas", 11), insertbackground=ACCENT,
-                        relief="flat", bd=6, width=50)
-            e.grid(row=row, column=1, padx=4, pady=6, sticky="w")
-            setattr(self, var_name, sv)
-            return e
+        tk.Label(num_func_frame, text="Número de funciones:", bg=BG, fg=TEXT,
+                font=FONT_HEAD, width=15, anchor="e").pack(side="left", padx=(0, 10))
         
-        campo(campo_frame, "G₁(x, y) =", 0, "sqrt(1 - y)", "sv_g1")
-        campo(campo_frame, "G₂(x, y) =", 1, "sqrt(1 - x)", "sv_g2")
-        campo(campo_frame, "x₀ =", 2, "0.5", "sv_x0")
-        campo(campo_frame, "y₀ =", 3, "0.5", "sv_y0")
+        self.sv_num_funcs = tk.StringVar(value="2")
+        num_entry = tk.Entry(num_func_frame, textvariable=self.sv_num_funcs, 
+                            bg=SURFACE2, fg=ACCENT, font=("Consolas", 11),
+                            insertbackground=ACCENT, relief="flat", bd=6, width=10)
+        num_entry.pack(side="left")
+        
+        btn_update = tk.Button(num_func_frame, text="Actualizar",
+                              bg=ACCENT, fg="#1e1e2e", font=("Segoe UI", 9, "bold"),
+                              relief="flat", bd=0, padx=10, pady=5,
+                              activebackground="#5a7fee", cursor="hand2",
+                              command=self._actualizar_campos_funciones)
+        btn_update.pack(side="left", padx=(10, 0))
+        
+        # Dynamic input fields container
+        self.func_input_frame = tk.Frame(frame, bg=BG)
+        self.func_input_frame.pack(fill="x", pady=(0, 15))
+        
+        # Initialize with 2 functions
+        self._actualizar_campos_funciones()
         
         # Parameters
         param_frame = tk.Frame(frame, bg=BG)
@@ -316,6 +327,66 @@ CÓMO USAR:
         result_canvas.bind("<Enter>", _bind_mousewheel)
         result_canvas.bind("<Leave>", _unbind_mousewheel)
     
+    def _actualizar_campos_funciones(self):
+        """Update the input fields based on the number of functions.
+        
+        Dynamically creates input fields for each function G_i and initial value.
+        """
+        try:
+            num_funcs = int(self.sv_num_funcs.get())
+            if num_funcs < 1:
+                num_funcs = 1
+                self.sv_num_funcs.set("1")
+        except ValueError:
+            num_funcs = 2
+            self.sv_num_funcs.set("2")
+        
+        # Clear existing fields
+        for widget in self.func_input_frame.winfo_children():
+            widget.destroy()
+        
+        # Generate variable names
+        var_names = []
+        for i in range(num_funcs):
+            if i == 0:
+                var_names.append('x')
+            elif i == 1:
+                var_names.append('y')
+            elif i == 2:
+                var_names.append('z')
+            else:
+                var_names.append(chr(ord('w') + (i - 3)))
+        
+        self.sv_funciones = []
+        self.sv_iniciales = []
+        
+        # Create function input fields
+        for i, var_name in enumerate(var_names):
+            row_frame = tk.Frame(self.func_input_frame, bg=BG)
+            row_frame.pack(fill="x", pady=4)
+            
+            # Function expression
+            tk.Label(row_frame, text=f"G_{i+1}({', '.join(var_names)}) =", 
+                    bg=BG, fg=TEXT, font=FONT_HEAD, width=20, anchor="e").pack(side="left", padx=(0, 10))
+            
+            sv_func = tk.StringVar(value=f"sqrt(1 - {var_names[(i+1) % len(var_names)]})" if i < 2 else "0")
+            entry_func = tk.Entry(row_frame, textvariable=sv_func, bg=SURFACE2, fg=ACCENT,
+                                font=("Consolas", 11), insertbackground=ACCENT,
+                                relief="flat", bd=6, width=40)
+            entry_func.pack(side="left", padx=(0, 20))
+            self.sv_funciones.append(sv_func)
+            
+            # Initial value
+            tk.Label(row_frame, text=f"{var_name}₀ =", 
+                    bg=BG, fg=TEXT, font=FONT_HEAD, width=8, anchor="e").pack(side="left", padx=(0, 10))
+            
+            sv_init = tk.StringVar(value="0.5")
+            entry_init = tk.Entry(row_frame, textvariable=sv_init, bg=SURFACE2, fg=ACCENT,
+                                font=("Consolas", 11), insertbackground=ACCENT,
+                                relief="flat", bd=6, width=12)
+            entry_init.pack(side="left")
+            self.sv_iniciales.append(sv_init)
+    
     def _ejecutar_solucionador(self):
         """Execute the fixed-point method with user-provided parameters.
         
@@ -326,10 +397,16 @@ CÓMO USAR:
             widget.destroy()
         
         try:
-            expr_g1 = self.sv_g1.get().strip()
-            expr_g2 = self.sv_g2.get().strip()
-            x0_val = float(self.sv_x0.get())
-            y0_val = float(self.sv_y0.get())
+            # Get number of functions
+            num_funcs = int(self.sv_num_funcs.get())
+            
+            # Get function expressions
+            expr_list = [sv.get().strip() for sv in self.sv_funciones]
+            
+            # Get initial values
+            x0_vals = [float(sv.get()) for sv in self.sv_iniciales]
+            
+            # Get parameters
             tol = float(self.sv_tol.get())
             maxiter = int(self.sv_maxiter.get())
             omega = float(self.sv_omega.get())
@@ -338,8 +415,20 @@ CÓMO USAR:
             return
         
         try:
-            G = build_G(expr_g1, expr_g2)
-            x0 = np.array([x0_val, y0_val])
+            # Generate variable names
+            var_names = []
+            for i in range(num_funcs):
+                if i == 0:
+                    var_names.append('x')
+                elif i == 1:
+                    var_names.append('y')
+                elif i == 2:
+                    var_names.append('z')
+                else:
+                    var_names.append(chr(ord('w') + (i - 3)))
+            
+            G = build_G(expr_list, var_names)
+            x0 = np.array(x0_vals)
             _ = G(x0)
         except Exception as e:
             messagebox.showerror("Error", f"Error en función G: {e}")
@@ -353,10 +442,19 @@ CÓMO USAR:
             messagebox.showerror("Error", f"Error en iteración: {e}")
             return
         
+        # Calculate Jacobian matrix at solution
+        try:
+            norm_jac, jac_matrix = norma_jacobiana(G, sol)
+        except Exception:
+            norm_jac, jac_matrix = None, None
+        
         # Save results
         self.last_solution = sol
         self.last_errors = errores
         self.last_historial = historial
+        self.last_var_names = var_names
+        self.last_jacobian = jac_matrix
+        self.last_jacobian_norm = norm_jac
         
         # Display summary
         result_frame = tk.Frame(self.solver_result_frame, bg=SURFACE, relief="flat", bd=0)
@@ -365,39 +463,60 @@ CÓMO USAR:
         estado = "✓ CONVERGIÓ" if convergio else "✗ No convergió"
         color = ACCENT2 if convergio else RED_ERR
         
+        # Build solution string
+        sol_str = "\n".join([f"  {var_names[i]}* = {sol[i]:.10f}" for i in range(len(sol))])
+        
         resumen = f"""
 {estado} en {iters} iteraciones
 Error final: {errores[-1]:.2e}
 
 Solución:
-  x* = {sol[0]:.10f}
-  y* = {sol[1]:.10f}
+{sol_str}
         """.strip()
         
         tk.Label(result_frame, text=resumen, bg=SURFACE, fg=color,
                 font=("Consolas", 10), justify="left",
                 anchor="nw").pack(padx=12, pady=8, fill="x")
         
-        # Iteration table
-        self._mostrar_tabla_iteraciones(historial, errores)
+        # Display Jacobian matrix
+        if jac_matrix is not None:
+            jac_frame = tk.Frame(self.solver_result_frame, bg=SURFACE, relief="flat", bd=0)
+            jac_frame.pack(fill="x", padx=16, pady=10)
+            
+            jac_color = ACCENT if norm_jac < 1 else RED_ERR
+            jac_text = f"Matriz Jacobiana (‖J‖∞ = {norm_jac:.4f})\n"
+            
+            # Format Jacobian matrix as string
+            for i in range(jac_matrix.shape[0]):
+                row_str = "  ".join([f"{jac_matrix[i, j]:.6f}" for j in range(jac_matrix.shape[1])])
+                jac_text += f"  {row_str}\n"
+            
+            tk.Label(jac_frame, text=jac_text, bg=SURFACE, fg=jac_color,
+                    font=("Consolas", 9), justify="left",
+                    anchor="nw").pack(padx=12, pady=8, fill="x")
         
-        # View graph button
-        btn_graph = tk.Button(self.solver_result_frame, text="📈  Ver Gráfica",
-                             bg=ACCENT, fg="#1e1e2e", font=("Segoe UI", 10, "bold"),
-                             relief="flat", bd=0, padx=15, pady=8,
-                             activebackground="#5a7fee", cursor="hand2",
-                             command=self._mostrar_grafica_solucionador)
-        btn_graph.pack(pady=10)
+        # Iteration table
+        self._mostrar_tabla_iteraciones(historial, errores, var_names)
+        
+        # View graph button (only for 2D systems)
+        if num_funcs == 2:
+            btn_graph = tk.Button(self.solver_result_frame, text="📈  Ver Gráfica",
+                                 bg=ACCENT, fg="#1e1e2e", font=("Segoe UI", 10, "bold"),
+                                 relief="flat", bd=0, padx=15, pady=8,
+                                 activebackground="#5a7fee", cursor="hand2",
+                                 command=self._mostrar_grafica_solucionador)
+            btn_graph.pack(pady=10)
     
-    def _mostrar_tabla_iteraciones(self, historial, errores):
+    def _mostrar_tabla_iteraciones(self, historial, errores, var_names):
         """Display a table with iteration history.
         
-        Creates a Treeview widget showing iteration number, x value,
-        y value, and error for each iteration performed.
+        Creates a Treeview widget showing iteration number, variable values,
+        and error for each iteration performed. Supports n-dimensional systems.
         
         Args:
-            historial: List of numpy arrays with x, y values at each iteration
+            historial: List of numpy arrays with variable values at each iteration
             errores: List of error values at each iteration
+            var_names: List of variable names (e.g., ['x', 'y', 'z'])
         """
         # Table frame
         table_frame = tk.Frame(self.solver_result_frame, bg=BG)
@@ -414,7 +533,9 @@ Solución:
         scrollbar = ttk.Scrollbar(tree_frame)
         scrollbar.pack(side="right", fill="y")
         
-        tree = ttk.Treeview(tree_frame, columns=("iter", "x", "y", "error"),
+        # Create dynamic columns based on number of variables
+        columns = ["iter"] + var_names + ["error"]
+        tree = ttk.Treeview(tree_frame, columns=columns,
                            show="headings", yscrollcommand=scrollbar.set,
                            height=15)
         
@@ -423,13 +544,13 @@ Solución:
         
         # Configure columns
         tree.heading("iter", text="Iteración")
-        tree.heading("x", text="x")
-        tree.heading("y", text="y")
-        tree.heading("error", text="Error")
-        
         tree.column("iter", width=80, anchor="center")
-        tree.column("x", width=150, anchor="center")
-        tree.column("y", width=150, anchor="center")
+        
+        for var_name in var_names:
+            tree.heading(var_name, text=var_name)
+            tree.column(var_name, width=150, anchor="center")
+        
+        tree.heading("error", text="Error")
         tree.column("error", width=150, anchor="center")
         
         # Configure style
@@ -455,12 +576,9 @@ Solución:
             else:
                 err_val = f"{err:.2e}"
             
-            tree.insert("", "end", values=(
-                i,
-                f"{h[0]:.10f}",
-                f"{h[1]:.10f}",
-                err_val
-            ))
+            # Build row values
+            row_values = [i] + [f"{h[j]:.10f}" for j in range(len(h))] + [err_val]
+            tree.insert("", "end", values=row_values)
     
     def _mostrar_grafica_solucionador(self):
         """Display convergence graph in the solver section.
@@ -605,7 +723,7 @@ Solución:
         Args:
             parent: Parent frame for the card
             name: Name of the example
-            data: Dictionary containing example data (desc, g1, g2, x0, y0, omega)
+            data: Dictionary containing example data (desc, expr_list, var_names, x0, omega)
         """
         card = tk.Frame(parent, bg=SURFACE, relief="flat", bd=0)
         card.pack(fill="x", pady=10)
@@ -621,7 +739,9 @@ Solución:
                 font=("Segoe UI", 10), justify="left").pack(anchor="w", padx=12, pady=4)
         
         # Formulas
-        fmla = f"G₁(x,y) = {data['g1']}\nG₂(x,y) = {data['g2']}"
+        var_str = ", ".join(data["var_names"])
+        fmla_lines = [f"G_{i+1}({var_str}) = {expr}" for i, expr in enumerate(data["expr_list"])]
+        fmla = "\n".join(fmla_lines)
         tk.Label(card, text=fmla, bg=SURFACE, fg=ACCENT,
                 font=("Consolas", 9), justify="left").pack(anchor="w", padx=12, pady=4)
         
@@ -638,21 +758,27 @@ Solución:
         
         Args:
             name: Name of the example
-            data: Dictionary containing example parameters
+            data: Dictionary containing example data (expr_list, var_names, x0, omega)
         """
         try:
-            G = build_G(data["g1"], data["g2"])
-            x0 = np.array([data["x0"], data["y0"]])
+            G = build_G(data["expr_list"], data["var_names"])
+            x0 = np.array(data["x0"])
             sol, errores, historial, iters, convergio = punto_fijo_sistema(
                 G, x0, tol=1e-8, max_iter=500, omega=data["omega"])
+            
+            # Calculate Jacobian
+            norm_jac, jac_matrix = norma_jacobiana(G, sol)
             
             self.last_solution = sol
             self.last_errors = errores
             self.last_historial = historial
+            self.last_var_names = data["var_names"]
+            self.last_jacobian = jac_matrix
+            self.last_jacobian_norm = norm_jac
             
             # Show result
-            msg = f"✓ Convergió en {iters} iteraciones\n\n"
-            msg += f"Solución:\n  x* = {sol[0]:.10f}\n  y* = {sol[1]:.10f}"
+            sol_str = "\n".join([f"  {data['var_names'][i]}* = {sol[i]:.10f}" for i in range(len(sol))])
+            msg = f"✓ Convergió en {iters} iteraciones\n\nSolución:\n{sol_str}"
             messagebox.showinfo(name, msg)
             
             # Go to visualizations
@@ -663,8 +789,8 @@ Solución:
     def _section_visualizations(self):
         """Display the visualizations section.
         
-        Shows convergence and trajectory plots if a computation has been
-        performed. Includes button to expand graphs.
+        Shows convergence plot (for all dimensions) and trajectory plot
+        (only for 2D systems). Includes button to expand graphs.
         """
         frame = tk.Frame(self.content_frame, bg=BG)
         frame.pack(fill="both", expand=True, padx=20, pady=20)
@@ -677,6 +803,31 @@ Solución:
                     bg=BG, fg=TEXT_MUTED, font=("Segoe UI", 10)).pack(pady=50)
             return
         
+        # Display Jacobian matrix
+        if self.last_jacobian is not None:
+            jac_frame = tk.Frame(frame, bg=SURFACE, relief="flat", bd=0)
+            jac_frame.pack(fill="x", pady=(0, 15))
+            
+            jac_color = ACCENT if self.last_jacobian_norm < 1 else RED_ERR
+            convergence_status = "CONVERGE" if self.last_jacobian_norm < 1 else "NO CONVERGE"
+            
+            jac_header = f"MATRIZ JACOBIANA (‖J‖∞ = {self.last_jacobian_norm:.6f}) - {convergence_status}"
+            tk.Label(jac_frame, text=jac_header, bg=SURFACE, fg=jac_color,
+                    font=("Segoe UI", 11, "bold")).pack(padx=12, pady=(8, 4), anchor="w")
+            
+            # Format Jacobian matrix as string
+            jac_text = ""
+            for i in range(self.last_jacobian.shape[0]):
+                row_str = "  ".join([f"{self.last_jacobian[i, j]:.6f}" for j in range(self.last_jacobian.shape[1])])
+                jac_text += f"  {row_str}\n"
+            
+            tk.Label(jac_frame, text=jac_text, bg=SURFACE, fg=TEXT,
+                    font=("Consolas", 10), justify="left",
+                    anchor="nw").pack(padx=12, pady=(0, 8), fill="x")
+        
+        # Check dimensionality
+        num_dims = len(self.last_solution)
+        
         # Button frame
         btn_frame = tk.Frame(frame, bg=BG)
         btn_frame.pack(fill="x", pady=(0, 15))
@@ -688,41 +839,60 @@ Solución:
                               command=self._ampliar_grafica_visualizaciones)
         btn_expand.pack(side="left", padx=10)
         
-        # Graph
-        fig, axes = plt.subplots(1, 2, figsize=(10, 4.5),
-                                facecolor="#11111b")
-        fig.subplots_adjust(wspace=0.35)
-        
-        # Convergence
-        ax1 = axes[0]
-        ax1.set_facecolor("#1e1e2e")
-        ax1.semilogy(range(1, len(self.last_errors)+1), self.last_errors,
-                    color=ACCENT, linewidth=1.8, marker='o', markersize=2)
-        ax1.set_title("Convergencia del Error", color=TEXT, fontsize=10)
-        ax1.set_xlabel("Iteración", color=TEXT_MUTED, fontsize=9)
-        ax1.set_ylabel("Error (norma ∞)", color=TEXT_MUTED, fontsize=9)
-        ax1.tick_params(colors=TEXT_MUTED, labelsize=8)
-        for spine in ax1.spines.values():
-            spine.set_edgecolor("#313149")
-        ax1.grid(True, alpha=0.2, color=TEXT_MUTED)
-        
-        # Trajectory
-        ax2 = axes[1]
-        ax2.set_facecolor("#1e1e2e")
-        hist = np.array(self.last_historial)
-        ax2.plot(hist[:, 0], hist[:, 1], 'o--',
-                color=ACCENT, linewidth=1.2, markersize=3, alpha=0.7,
-                label="Trayectoria")
-        ax2.plot(self.last_solution[0], self.last_solution[1], '*',
-                color=ACCENT2, markersize=14, label="Solución")
-        ax2.set_title("Trayectoria Iterativa", color=TEXT, fontsize=10)
-        ax2.set_xlabel("x", color=TEXT_MUTED, fontsize=9)
-        ax2.set_ylabel("y", color=TEXT_MUTED, fontsize=9)
-        ax2.tick_params(colors=TEXT_MUTED, labelsize=8)
-        for spine in ax2.spines.values():
-            spine.set_edgecolor("#313149")
-        ax2.grid(True, alpha=0.2, color=TEXT_MUTED)
-        ax2.legend(fontsize=8, facecolor=SURFACE, labelcolor=TEXT)
+        # Graph - show convergence for all dimensions, trajectory only for 2D
+        if num_dims == 2:
+            fig, axes = plt.subplots(1, 2, figsize=(10, 4.5),
+                                    facecolor="#11111b")
+            fig.subplots_adjust(wspace=0.35)
+            
+            # Convergence
+            ax1 = axes[0]
+            ax1.set_facecolor("#1e1e2e")
+            ax1.semilogy(range(1, len(self.last_errors)+1), self.last_errors,
+                        color=ACCENT, linewidth=1.8, marker='o', markersize=2)
+            ax1.set_title("Convergencia del Error", color=TEXT, fontsize=10)
+            ax1.set_xlabel("Iteración", color=TEXT_MUTED, fontsize=9)
+            ax1.set_ylabel("Error (norma ∞)", color=TEXT_MUTED, fontsize=9)
+            ax1.tick_params(colors=TEXT_MUTED, labelsize=8)
+            for spine in ax1.spines.values():
+                spine.set_edgecolor("#313149")
+            ax1.grid(True, alpha=0.2, color=TEXT_MUTED)
+            
+            # Trajectory
+            ax2 = axes[1]
+            ax2.set_facecolor("#1e1e2e")
+            hist = np.array(self.last_historial)
+            ax2.plot(hist[:, 0], hist[:, 1], 'o--',
+                    color=ACCENT, linewidth=1.2, markersize=3, alpha=0.7,
+                    label="Trayectoria")
+            ax2.plot(self.last_solution[0], self.last_solution[1], '*',
+                    color=ACCENT2, markersize=14, label="Solución")
+            ax2.set_title("Trayectoria Iterativa", color=TEXT, fontsize=10)
+            ax2.set_xlabel("x", color=TEXT_MUTED, fontsize=9)
+            ax2.set_ylabel("y", color=TEXT_MUTED, fontsize=9)
+            ax2.tick_params(colors=TEXT_MUTED, labelsize=8)
+            for spine in ax2.spines.values():
+                spine.set_edgecolor("#313149")
+            ax2.grid(True, alpha=0.2, color=TEXT_MUTED)
+            ax2.legend(fontsize=8, facecolor=SURFACE, labelcolor=TEXT)
+        else:
+            # Only convergence plot for n > 2 dimensions
+            fig, ax = plt.subplots(1, 1, figsize=(10, 4.5),
+                                   facecolor="#11111b")
+            ax.set_facecolor("#1e1e2e")
+            ax.semilogy(range(1, len(self.last_errors)+1), self.last_errors,
+                        color=ACCENT, linewidth=1.8, marker='o', markersize=2)
+            ax.set_title("Convergencia del Error", color=TEXT, fontsize=10)
+            ax.set_xlabel("Iteración", color=TEXT_MUTED, fontsize=9)
+            ax.set_ylabel("Error (norma ∞)", color=TEXT_MUTED, fontsize=9)
+            ax.tick_params(colors=TEXT_MUTED, labelsize=8)
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#313149")
+            ax.grid(True, alpha=0.2, color=TEXT_MUTED)
+            
+            # Add note about trajectory
+            tk.Label(frame, text=f"Nota: La trayectoria solo se muestra para sistemas 2D. Sistema actual: {num_dims}D",
+                    bg=BG, fg=TEXT_MUTED, font=("Segoe UI", 9)).pack(pady=5)
         
         canvas = FigureCanvasTkAgg(fig, master=frame)
         canvas.draw()
@@ -732,7 +902,7 @@ Solución:
         """Open expanded visualization graph in a new window.
         
         Creates a separate toplevel window with larger plots for
-        better visualization of convergence and trajectory.
+        better visualization of convergence and trajectory (2D only).
         """
         if self.last_solution is None:
             messagebox.showwarning("Advertencia", "Ejecuta el método primero")
@@ -743,40 +913,58 @@ Solución:
         top.geometry("1200x600")
         top.configure(bg=BG)
         
-        fig, axes = plt.subplots(1, 2, figsize=(14, 6),
-                                facecolor="#11111b")
-        fig.subplots_adjust(wspace=0.35)
+        # Check dimensionality
+        num_dims = len(self.last_solution)
         
-        # Convergence
-        ax1 = axes[0]
-        ax1.set_facecolor("#1e1e2e")
-        ax1.semilogy(range(1, len(self.last_errors)+1), self.last_errors,
-                    color=ACCENT, linewidth=2.5, marker='o', markersize=4)
-        ax1.set_title("Convergencia del Error", color=TEXT, fontsize=14, fontweight='bold')
-        ax1.set_xlabel("Iteración", color=TEXT_MUTED, fontsize=12)
-        ax1.set_ylabel("Error (norma ∞)", color=TEXT_MUTED, fontsize=12)
-        ax1.tick_params(colors=TEXT_MUTED, labelsize=10)
-        for spine in ax1.spines.values():
-            spine.set_edgecolor("#313149")
-        ax1.grid(True, alpha=0.2, color=TEXT_MUTED)
-        
-        # Trajectory
-        ax2 = axes[1]
-        ax2.set_facecolor("#1e1e2e")
-        hist = np.array(self.last_historial)
-        ax2.plot(hist[:, 0], hist[:, 1], 'o--',
-                color=ACCENT, linewidth=2, markersize=5, alpha=0.7,
-                label="Trayectoria")
-        ax2.plot(self.last_solution[0], self.last_solution[1], '*',
-                color=ACCENT2, markersize=20, label="Solución")
-        ax2.set_title("Trayectoria Iterativa", color=TEXT, fontsize=14, fontweight='bold')
-        ax2.set_xlabel("x", color=TEXT_MUTED, fontsize=12)
-        ax2.set_ylabel("y", color=TEXT_MUTED, fontsize=12)
-        ax2.tick_params(colors=TEXT_MUTED, labelsize=10)
-        for spine in ax2.spines.values():
-            spine.set_edgecolor("#313149")
-        ax2.grid(True, alpha=0.2, color=TEXT_MUTED)
-        ax2.legend(fontsize=10, facecolor=SURFACE, labelcolor=TEXT)
+        if num_dims == 2:
+            fig, axes = plt.subplots(1, 2, figsize=(14, 6),
+                                    facecolor="#11111b")
+            fig.subplots_adjust(wspace=0.35)
+            
+            # Convergence
+            ax1 = axes[0]
+            ax1.set_facecolor("#1e1e2e")
+            ax1.semilogy(range(1, len(self.last_errors)+1), self.last_errors,
+                        color=ACCENT, linewidth=2.5, marker='o', markersize=4)
+            ax1.set_title("Convergencia del Error", color=TEXT, fontsize=14, fontweight='bold')
+            ax1.set_xlabel("Iteración", color=TEXT_MUTED, fontsize=12)
+            ax1.set_ylabel("Error (norma ∞)", color=TEXT_MUTED, fontsize=12)
+            ax1.tick_params(colors=TEXT_MUTED, labelsize=10)
+            for spine in ax1.spines.values():
+                spine.set_edgecolor("#313149")
+            ax1.grid(True, alpha=0.2, color=TEXT_MUTED)
+            
+            # Trajectory
+            ax2 = axes[1]
+            ax2.set_facecolor("#1e1e2e")
+            hist = np.array(self.last_historial)
+            ax2.plot(hist[:, 0], hist[:, 1], 'o--',
+                    color=ACCENT, linewidth=2, markersize=5, alpha=0.7,
+                    label="Trayectoria")
+            ax2.plot(self.last_solution[0], self.last_solution[1], '*',
+                    color=ACCENT2, markersize=20, label="Solución")
+            ax2.set_title("Trayectoria Iterativa", color=TEXT, fontsize=14, fontweight='bold')
+            ax2.set_xlabel("x", color=TEXT_MUTED, fontsize=12)
+            ax2.set_ylabel("y", color=TEXT_MUTED, fontsize=12)
+            ax2.tick_params(colors=TEXT_MUTED, labelsize=10)
+            for spine in ax2.spines.values():
+                spine.set_edgecolor("#313149")
+            ax2.grid(True, alpha=0.2, color=TEXT_MUTED)
+            ax2.legend(fontsize=10, facecolor=SURFACE, labelcolor=TEXT)
+        else:
+            # Only convergence plot for n > 2 dimensions
+            fig, ax = plt.subplots(1, 1, figsize=(14, 6),
+                                   facecolor="#11111b")
+            ax.set_facecolor("#1e1e2e")
+            ax.semilogy(range(1, len(self.last_errors)+1), self.last_errors,
+                        color=ACCENT, linewidth=2.5, marker='o', markersize=4)
+            ax.set_title("Convergencia del Error", color=TEXT, fontsize=14, fontweight='bold')
+            ax.set_xlabel("Iteración", color=TEXT_MUTED, fontsize=12)
+            ax.set_ylabel("Error (norma ∞)", color=TEXT_MUTED, fontsize=12)
+            ax.tick_params(colors=TEXT_MUTED, labelsize=10)
+            for spine in ax.spines.values():
+                spine.set_edgecolor("#313149")
+            ax.grid(True, alpha=0.2, color=TEXT_MUTED)
         
         canvas = FigureCanvasTkAgg(fig, master=top)
         canvas.draw()

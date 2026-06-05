@@ -98,29 +98,33 @@ SAFE_NS.update({
 })
 
 
-def build_G(expr_g1, expr_g2):
+def build_G(expr_list, var_names):
     """Build G(x) function from string expressions.
     
-    Parses string expressions for g1(x,y) and g2(x,y) and returns
+    Parses string expressions for g_i(x) and returns
     a callable function that evaluates them safely.
     
     Args:
-        expr_g1: String expression for g1(x,y)
-        expr_g2: String expression for g2(x,y)
+        expr_list: List of string expressions for g_i(x)
+        var_names: List of variable names (e.g., ['x', 'y', 'z'])
     
     Returns:
-        function: G(x_arr) that returns numpy array [g1(x,y), g2(x,y)]
+        function: G(x_arr) that returns numpy array of function values
     
     Raises:
         Exception: If expression evaluation fails
     """
     def G(x_arr):
-        x, y = float(x_arr[0]), float(x_arr[1])
         ns = dict(SAFE_NS)
-        ns.update({"x": x, "y": y})
-        r1 = eval(expr_g1, {"__builtins__": {}}, ns)
-        r2 = eval(expr_g2, {"__builtins__": {}}, ns)
-        return np.array([float(r1), float(r2)])
+        # Add all variables to namespace
+        for i, var_name in enumerate(var_names):
+            ns[var_name] = float(x_arr[i])
+        
+        results = []
+        for expr in expr_list:
+            r = eval(expr, {"__builtins__": {}}, ns)
+            results.append(float(r))
+        return np.array(results)
     return G
 
 
@@ -128,26 +132,23 @@ def build_G(expr_g1, expr_g2):
 EJEMPLOS = {
     "Ejemplo 1: Cuadrático": {
         "desc": "x² + y = 1,  x + y² = 1",
-        "g1": "sqrt(1 - y)",
-        "g2": "sqrt(1 - x)",
-        "x0": 0.5,
-        "y0": 0.5,
+        "expr_list": ["sqrt(1 - y)", "sqrt(1 - x)"],
+        "var_names": ["x", "y"],
+        "x0": [0.5, 0.5],
         "omega": 1.0,
     },
     "Ejemplo 2: Círculo/Parábola": {
         "desc": "x²+y²=4  ∩  y=x²-1",
-        "g1": "sqrt(y + 1)",
-        "g2": "sqrt(4 - x**2)",
-        "x0": 1.5,
-        "y0": 1.0,
+        "expr_list": ["sqrt(y + 1)", "sqrt(4 - x**2)"],
+        "var_names": ["x", "y"],
+        "x0": [1.5, 1.0],
         "omega": 0.5,
     },
     "Ejemplo 3: Exponencial": {
         "desc": "x·eʸ=2,  y·eˣ=3",
-        "g1": "2 / exp(y)",
-        "g2": "3 / exp(x)",
-        "x0": 0.5,
-        "y0": 0.9,
+        "expr_list": ["2 / exp(y)", "3 / exp(x)"],
+        "var_names": ["x", "y"],
+        "x0": [0.5, 0.9],
         "omega": 0.5,
     },
 }
