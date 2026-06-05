@@ -17,7 +17,7 @@ Dependencies:
 """
 
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, ttk
 import numpy as np
 import matplotlib
 matplotlib.use("TkAgg")
@@ -348,6 +348,9 @@ Solución:
                 font=("Consolas", 10), justify="left",
                 anchor="nw").pack(padx=12, pady=8, fill="x")
         
+        # Iteration table
+        self._mostrar_tabla_iteraciones(historial, errores)
+        
         # View graph button
         btn_graph = tk.Button(self.solver_result_frame, text="📈  Ver Gráfica",
                              bg=ACCENT, fg="#1e1e2e", font=("Segoe UI", 10, "bold"),
@@ -355,6 +358,79 @@ Solución:
                              activebackground="#5a7fee", cursor="hand2",
                              command=self._mostrar_grafica_solucionador)
         btn_graph.pack(pady=10)
+    
+    def _mostrar_tabla_iteraciones(self, historial, errores):
+        """Display a table with iteration history.
+        
+        Creates a Treeview widget showing iteration number, x value,
+        y value, and error for each iteration performed.
+        
+        Args:
+            historial: List of numpy arrays with x, y values at each iteration
+            errores: List of error values at each iteration
+        """
+        # Table frame
+        table_frame = tk.Frame(self.solver_result_frame, bg=BG)
+        table_frame.pack(fill="both", expand=True, padx=16, pady=(10, 0))
+        
+        # Title
+        tk.Label(table_frame, text="Tabla de Iteraciones", bg=BG, fg=ACCENT,
+                font=("Segoe UI", 11, "bold")).pack(anchor="w", pady=(0, 10))
+        
+        # Create Treeview with scrollbar
+        tree_frame = tk.Frame(table_frame, bg=SURFACE)
+        tree_frame.pack(fill="both", expand=True)
+        
+        scrollbar = ttk.Scrollbar(tree_frame)
+        scrollbar.pack(side="right", fill="y")
+        
+        tree = ttk.Treeview(tree_frame, columns=("iter", "x", "y", "error"),
+                           show="headings", yscrollcommand=scrollbar.set,
+                           height=15)
+        
+        scrollbar.config(command=tree.yview)
+        tree.pack(side="left", fill="both", expand=True)
+        
+        # Configure columns
+        tree.heading("iter", text="Iteración")
+        tree.heading("x", text="x")
+        tree.heading("y", text="y")
+        tree.heading("error", text="Error")
+        
+        tree.column("iter", width=80, anchor="center")
+        tree.column("x", width=150, anchor="center")
+        tree.column("y", width=150, anchor="center")
+        tree.column("error", width=150, anchor="center")
+        
+        # Configure style
+        style = ttk.Style()
+        style.configure("Treeview",
+                       background=SURFACE2,
+                       foreground=TEXT,
+                       fieldbackground=SURFACE2,
+                       rowheight=25)
+        style.configure("Treeview.Heading",
+                       background=SURFACE,
+                       foreground=ACCENT,
+                       font=("Segoe UI", 10, "bold"))
+        style.map("Treeview",
+                 background=[("selected", ACCENT)],
+                 foreground=[("selected", "#1e1e2e")])
+        
+        # Populate table with iteration data
+        for i, (h, err) in enumerate(zip(historial, errores)):
+            # Skip initial point (iteration 0) for error display
+            if i == 0:
+                err_val = "-"
+            else:
+                err_val = f"{err:.2e}"
+            
+            tree.insert("", "end", values=(
+                i,
+                f"{h[0]:.10f}",
+                f"{h[1]:.10f}",
+                err_val
+            ))
     
     def _mostrar_grafica_solucionador(self):
         """Display convergence graph in the solver section.
