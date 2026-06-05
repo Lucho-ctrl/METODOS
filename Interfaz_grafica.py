@@ -282,9 +282,39 @@ CÓMO USAR:
                        command=self._ejecutar_solucionador)
         btn.pack(pady=15)
         
-        # Result frame
-        self.solver_result_frame = tk.Frame(frame, bg=BG)
-        self.solver_result_frame.pack(fill="both", expand=True, pady=(15, 0))
+        # Result frame with scrollbar
+        result_container = tk.Frame(frame, bg=BG)
+        result_container.pack(fill="both", expand=True, pady=(15, 0))
+        
+        result_scrollbar = ttk.Scrollbar(result_container)
+        result_scrollbar.pack(side="right", fill="y")
+        
+        result_canvas = tk.Canvas(result_container, bg=BG, 
+                                  yscrollcommand=result_scrollbar.set,
+                                  highlightthickness=0)
+        result_canvas.pack(side="left", fill="both", expand=True)
+        
+        result_scrollbar.config(command=result_canvas.yview)
+        
+        self.solver_result_frame = tk.Frame(result_canvas, bg=BG)
+        result_canvas.create_window((0, 0), window=self.solver_result_frame, anchor="nw")
+        
+        # Configure canvas to update scroll region when frame changes
+        self.solver_result_frame.bind("<Configure>", 
+                                      lambda e: result_canvas.configure(scrollregion=result_canvas.bbox("all")))
+        
+        # Enable mouse wheel scrolling
+        def _on_mousewheel(event):
+            result_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+        
+        def _bind_mousewheel(event):
+            result_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+        
+        def _unbind_mousewheel(event):
+            result_canvas.unbind_all("<MouseWheel>")
+        
+        result_canvas.bind("<Enter>", _bind_mousewheel)
+        result_canvas.bind("<Leave>", _unbind_mousewheel)
     
     def _ejecutar_solucionador(self):
         """Execute the fixed-point method with user-provided parameters.
