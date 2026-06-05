@@ -1,292 +1,394 @@
-# =============================================================
-#  INTERFAZ GRÁFICA — MÉTODO DEL PUNTO FIJO (LEGACY v1.x)
-#  Métodos Numéricos — Universidad Distrital 2026-1
-#  Archivo: METODOS/Interfaz_grafica.py
-# =============================================================
-"""
-Legacy GUI Module for Fixed-Point Method (v1.x).
+"""Graphical User Interface Module for Fixed-Point Method.
 
-DEPRECATED: Use main_app.py for the new unified interface (v2.0+).
+This module provides the main GUI application for solving systems of
+non-linear equations using the fixed-point iteration method. The interface
+features a modern sidebar navigation with multiple sections for solver,
+examples, visualizations, and configuration.
 
-This module provides a tabbed GUI interface with automatic graph 
-generation. It is maintained for backwards compatibility but should 
-not be used for new features.
-
-Architecture:
-    - 3-tab Tkinter interface (Entrada, Pasos, Resultado)
-    - Automatic graph generation during execution
-    - Linear workflow from input to visualization
-    
-Migration Path:
-    Old: python Punto_Fijo_v2.py → Punto_Fijo.py → Interfaz_grafica.py
-    New: python Punto_Fijo_v2.py → main_app.py (unified interface)
+Main Components:
+    - MainApplication: Main GUI class with sidebar navigation
+    - Color scheme constants for consistent theming
+    - Integration with numerical core from main_app module
 
 Dependencies:
     - tkinter: GUI framework
     - numpy: Numerical computations
     - matplotlib: Visualization
-
-Author: Andrés Cerdas Padilla
-Institution: Universidad Distrital Francisco José de Caldas
-Year: 2026
-Status: Legacy (maintained for compatibility)
 """
 
 import tkinter as tk
-from tkinter import ttk, messagebox, scrolledtext
+from tkinter import messagebox
 import numpy as np
 import matplotlib
 matplotlib.use("TkAgg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import os, sys, math, cmath
 
-# ── colores y fuentes ──────────────────────────────────────
-BG        = "#1e1e2e"
-SURFACE   = "#2a2a3e"
-SURFACE2  = "#313149"
-ACCENT    = "#7c9eff"
-ACCENT2   = "#a6e3a1"
-TEXT      = "#cdd6f4"
-TEXT_MUTED= "#a6adc8"
-RED_ERR   = "#f38ba8"
-YELLOW    = "#f9e2af"
+# Import numerical core from main_app
+from main_app import (
+    punto_fijo_sistema,
+    build_G,
+    EJEMPLOS
+)
+
+# Color scheme constants
+BG = "#1e1e2e"
+SURFACE = "#2a2a3e"
+SURFACE2 = "#313149"
+ACCENT = "#7c9eff"
+ACCENT2 = "#a6e3a1"
+TEXT = "#cdd6f4"
+TEXT_MUTED = "#a6adc8"
+RED_ERR = "#f38ba8"
+YELLOW = "#f9e2af"
 FONT_BODY = ("Consolas", 11)
 FONT_HEAD = ("Segoe UI", 13, "bold")
 FONT_MONO = ("Consolas", 10)
 
-# ── núcleo numérico (copiado de Punto_Fijo.py) ────────────
-def punto_fijo_sistema(G, x0, tol=1e-8, max_iter=500, omega=1.0):
-    x = x0.copy().astype(float)
-    historial, errores = [x.copy()], []
-    for k in range(1, max_iter + 1):
-        Gx = G(x)
-        x_nuevo = (1 - omega) * x + omega * Gx
-        error = np.linalg.norm(x_nuevo - x, ord=np.inf)
-        errores.append(error)
-        x = x_nuevo
-        historial.append(x.copy())
-        if error < tol:
-            return x, errores, historial, k, True
-    return x, errores, historial, max_iter, False
 
-def norma_jacobiana(G, x, h=1e-5):
-    n = len(x)
-    J = np.zeros((n, n))
-    for j in range(n):
-        xp, xm = x.copy(), x.copy()
-        xp[j] += h; xm[j] -= h
-        J[:, j] = (G(xp) - G(xm)) / (2 * h)
-    return np.linalg.norm(J, ord=np.inf), J
+class MainApplication(tk.Tk):
+    """Main GUI application with sidebar navigation.
+    
+    This class implements the primary graphical interface for the fixed-point
+    method solver. It provides a modern, dark-themed interface with sidebar
+    navigation containing multiple sections: home, solver, examples,
+    visualizations, settings, and about.
+    
+    Attributes:
+        current_section: StringVar tracking the current active section
+        last_solution: NumPy array storing the last computed solution
+        last_errors: List storing error history from last computation
+        last_historial: List storing iteration history from last computation
+        canvas_widget: Reference to matplotlib canvas widget
+        content_frame: Frame container for dynamic content
+    """
 
-# ── utilidad: parsear expresión del usuario ───────────────
-SAFE_NS = {k: getattr(math, k) for k in dir(math) if not k.startswith("_")}
-SAFE_NS.update({"np": np, "sqrt": math.sqrt, "exp": math.exp,
-                "log": math.log, "sin": math.sin, "cos": math.cos,
-                "tan": math.tan, "abs": abs, "pi": math.pi, "e": math.e})
-
-def build_G(expr_g1, expr_g2):
-    """Construye G(x) = [g1(x,y), g2(x,y)] desde strings."""
-    def G(x_arr):
-        x, y = float(x_arr[0]), float(x_arr[1])
-        ns = dict(SAFE_NS); ns.update({"x": x, "y": y})
-        r1 = eval(expr_g1, {"__builtins__": {}}, ns)
-        r2 = eval(expr_g2, {"__builtins__": {}}, ns)
-        return np.array([float(r1), float(r2)])
-    return G
-
-# ═══════════════════════════════════════════════════════════
-#  VENTANA PRINCIPAL
-# ═══════════════════════════════════════════════════════════
-class AppPuntoFijo(tk.Tk):
     def __init__(self):
+        """Initialize the main application window.
+        
+        Sets up the window properties, initializes state variables, and
+        builds the user interface with sidebar navigation.
+        """
         super().__init__()
         self.title("Método del Punto Fijo — Universidad Distrital 2026-1")
         self.configure(bg=BG)
         self.resizable(True, True)
-        self.geometry("1100x720")
-        self._build_header()
-        self._build_notebook()
-        self._build_statusbar()
-
-    # ── cabecera ──────────────────────────────────────────
-    def _build_header(self):
-        hdr = tk.Frame(self, bg="#11111b", pady=10)
+        
+        # Full screen automatic
+        self.state('zoomed')
+        
+        # Shared state
+        self.current_section = tk.StringVar(value="home")
+        self.last_solution = None
+        self.last_errors = None
+        self.last_historial = None
+        self.canvas_widget = None
+        
+        self._build_ui()
+    
+    def _build_ui(self):
+        """Build the main user interface with sidebar navigation.
+        
+        Creates the main frame, sidebar navigation, and content area.
+        Initializes the home section as the default view.
+        """
+        main_frame = tk.Frame(self, bg=BG)
+        main_frame.pack(fill="both", expand=True)
+        
+        # Sidebar
+        self._build_sidebar(main_frame)
+        
+        # Content area
+        self.content_frame = tk.Frame(main_frame, bg=BG)
+        self.content_frame.pack(side="right", fill="both", expand=True)
+        
+        # Show initial section
+        self._show_section("home")
+    
+    def _build_sidebar(self, parent):
+        """Build the sidebar navigation panel.
+        
+        Args:
+            parent: Parent frame for the sidebar
+            
+        Creates a dark-themed sidebar with navigation buttons for each
+        section of the application.
+        """
+        sidebar = tk.Frame(parent, bg=SURFACE, width=200)
+        sidebar.pack(side="left", fill="y", padx=0, pady=0)
+        sidebar.pack_propagate(False)
+        
+        # Header
+        hdr = tk.Frame(sidebar, bg="#11111b", height=80)
         hdr.pack(fill="x")
-        tk.Label(hdr, text="⚙  Método del Punto Fijo para Sistemas No Lineales",
-                 bg="#11111b", fg=ACCENT, font=("Segoe UI", 15, "bold")).pack(side="left", padx=20)
-        tk.Label(hdr, text="Métodos Numéricos · UD 2026-1",
-                 bg="#11111b", fg=TEXT_MUTED, font=("Segoe UI", 10)).pack(side="right", padx=20)
+        hdr.pack_propagate(False)
+        tk.Label(hdr, text="⚙", bg="#11111b", fg=ACCENT,
+                font=("Segoe UI", 24)).pack(pady=10)
+        tk.Label(hdr, text="Punto Fijo", bg="#11111b", fg=ACCENT,
+                font=("Segoe UI", 12, "bold")).pack()
+        
+        # Navigation buttons
+        sections = [
+            ("home", "🏠  Inicio"),
+            ("solver", "🧮  Solucionador"),
+            ("examples", "📚  Ejemplos"),
+            ("visualizations", "📈  Visualizaciones"),
+            ("settings", "⚙️  Configuración"),
+            ("about", "ℹ️  Acerca de"),
+        ]
+        
+        for sec_id, label in sections:
+            btn = tk.Button(
+                sidebar, text=label, bg=SURFACE, fg=TEXT_MUTED,
+                font=("Segoe UI", 11), relief="flat", bd=0,
+                padx=16, pady=12, anchor="w", cursor="hand2",
+                command=lambda s=sec_id: self._show_section(s)
+            )
+            btn.pack(fill="x", padx=0, pady=2)
+            btn.config(activebackground=SURFACE2, activeforeground=ACCENT)
+    
+    def _clear_content(self):
+        """Clear all widgets from the content frame.
+        
+        Destroys all child widgets in the content area to prepare for
+        displaying a new section.
+        """
+        for widget in self.content_frame.winfo_children():
+            widget.destroy()
+    
+    def _show_section(self, section):
+        """Display the specified section in the content area.
+        
+        Args:
+            section: String identifier of the section to display
+                    (home, solver, examples, visualizations, settings, about)
+        """
+        self._clear_content()
+        self.current_section.set(section)
+        
+        if section == "home":
+            self._section_home()
+        elif section == "solver":
+            self._section_solver()
+        elif section == "examples":
+            self._section_examples()
+        elif section == "visualizations":
+            self._section_visualizations()
+        elif section == "settings":
+            self._section_settings()
+        elif section == "about":
+            self._section_about()
+    
+    def _section_home(self):
+        """Display the home section with welcome information.
+        
+        Shows an introduction to the fixed-point method and instructions
+        for using the application.
+        """
+        frame = tk.Frame(self.content_frame, bg=BG)
+        frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        tk.Label(frame, text="Bienvenido", bg=BG, fg=ACCENT,
+                font=("Segoe UI", 20, "bold")).pack(pady=(0, 20))
+        
+        info_text = """
+El Método del Punto Fijo es una técnica numérica para resolver sistemas 
+de ecuaciones no lineales de la forma:
+    
+    x = G₁(x, y)
+    y = G₂(x, y)
 
-    # ── notebook con pestañas ────────────────────────────
-    def _build_notebook(self):
-        style = ttk.Style(self)
-        style.theme_use("clam")
-        style.configure("TNotebook",        background=BG, borderwidth=0)
-        style.configure("TNotebook.Tab",    background=SURFACE, foreground=TEXT_MUTED,
-                        font=("Segoe UI", 11), padding=[16, 6])
-        style.map("TNotebook.Tab",
-                  background=[("selected", SURFACE2)],
-                  foreground=[("selected", ACCENT)])
+CARACTERÍSTICAS:
+• Solucionador: Ingresa tus propias funciones G₁ y G₂
+• Ejemplos: Tres casos de uso predefinidos
+• Visualizaciones: Gráficas de convergencia y trayectoria
+• Configuración: Ajusta parámetros numéricos
+• Análisis: Verifica convergencia mediante norma jacobiana
 
-        nb = ttk.Notebook(self)
-        nb.pack(fill="both", expand=True, padx=10, pady=(6, 0))
-
-        self.tab_entrada   = tk.Frame(nb, bg=BG)
-        self.tab_pasos     = tk.Frame(nb, bg=BG)
-        self.tab_resultado = tk.Frame(nb, bg=BG)
-
-        nb.add(self.tab_entrada,   text="  📥  Entrada  ")
-        nb.add(self.tab_pasos,     text="  📋  Pasos  ")
-        nb.add(self.tab_resultado, text="  📈  Resultado  ")
-        self.nb = nb
-
-        self._build_tab_entrada()
-        self._build_tab_pasos()
-        self._build_tab_resultado()
-
-    # ── TAB 1 — Entrada ───────────────────────────────────
-    def _build_tab_entrada(self):
-        p = self.tab_entrada
-        pad = dict(padx=16, pady=6)
-
-        # ─ instrucciones ─
-        info = tk.Frame(p, bg=SURFACE, bd=0, relief="flat")
-        info.pack(fill="x", **pad)
-        tk.Label(info, text="ℹ  Ingresa la función de iteración  x = G(x, y)  e  y = G(x, y)\n"
-                            "   Operadores disponibles: +  -  *  /  **  sqrt()  exp()  log()  sin()  cos()  tan()  abs()  pi  e",
-                 bg=SURFACE, fg=TEXT_MUTED, font=("Segoe UI", 10), justify="left",
-                 wraplength=900).pack(padx=12, pady=8, anchor="w")
-
-        # ─ campos de entrada ─
-        frame_campos = tk.Frame(p, bg=BG)
-        frame_campos.pack(fill="x", padx=16, pady=4)
-
+CÓMO USAR:
+1. Ve a "Solucionador" para ingresar tus funciones
+2. O explora "Ejemplos" para ver casos predefinidos
+3. Usa "Visualizaciones" para ver gráficas de convergencia
+4. Ajusta parámetros en "Configuración" si es necesario
+        """
+        
+        txt = tk.Label(frame, text=info_text, bg=BG, fg=TEXT,
+                      font=("Segoe UI", 10), justify="left",
+                      wraplength=800)
+        txt.pack(anchor="nw", pady=20)
+    
+    def _section_solver(self):
+        """Display the interactive solver section.
+        
+        Provides input fields for functions G₁ and G₂, initial values,
+        and numerical parameters. Includes execution button and result display.
+        """
+        frame = tk.Frame(self.content_frame, bg=BG)
+        frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        tk.Label(frame, text="Solucionador Interactivo", bg=BG, fg=ACCENT,
+                font=FONT_HEAD).pack(anchor="w", pady=(0, 15))
+        
+        # Instructions
+        info_frame = tk.Frame(frame, bg=SURFACE, bd=0, relief="flat")
+        info_frame.pack(fill="x", pady=(0, 15))
+        tk.Label(info_frame, text="ℹ  Ingresa G₁(x,y) y G₂(x,y)\n"
+                                 "   Operadores: + - * / ** sqrt() exp() log() sin() cos() tan() abs()",
+                bg=SURFACE, fg=TEXT_MUTED, font=("Segoe UI", 9), justify="left",
+                wraplength=800).pack(padx=12, pady=8, anchor="w")
+        
+        # Input fields
+        campo_frame = tk.Frame(frame, bg=BG)
+        campo_frame.pack(fill="x", pady=(0, 15))
+        
         def campo(parent, label, row, placeholder, var_name):
             tk.Label(parent, text=label, bg=BG, fg=TEXT, font=FONT_HEAD,
-                     width=12, anchor="e").grid(row=row, column=0, padx=(0,10), pady=6, sticky="e")
+                    width=12, anchor="e").grid(row=row, column=0, padx=(0,10), pady=6, sticky="e")
             sv = tk.StringVar(value=placeholder)
             e = tk.Entry(parent, textvariable=sv, bg=SURFACE2, fg=ACCENT,
-                         font=("Consolas", 12), insertbackground=ACCENT,
-                         relief="flat", bd=6, width=55)
+                        font=("Consolas", 11), insertbackground=ACCENT,
+                        relief="flat", bd=6, width=50)
             e.grid(row=row, column=1, padx=4, pady=6, sticky="w")
             setattr(self, var_name, sv)
             return e
-
-        campo(frame_campos, "G₁(x, y) =", 0, "sqrt(1 - y)", "sv_g1")
-        campo(frame_campos, "G₂(x, y) =", 1, "sqrt(1 - x)", "sv_g2")
-        campo(frame_campos, "x₀ =",       2, "0.5",         "sv_x0")
-        campo(frame_campos, "y₀ =",       3, "0.5",         "sv_y0")
-
-        # ─ parámetros ─
-        frame_params = tk.Frame(p, bg=BG)
-        frame_params.pack(fill="x", padx=16, pady=4)
-
+        
+        campo(campo_frame, "G₁(x, y) =", 0, "sqrt(1 - y)", "sv_g1")
+        campo(campo_frame, "G₂(x, y) =", 1, "sqrt(1 - x)", "sv_g2")
+        campo(campo_frame, "x₀ =", 2, "0.5", "sv_x0")
+        campo(campo_frame, "y₀ =", 3, "0.5", "sv_y0")
+        
+        # Parameters
+        param_frame = tk.Frame(frame, bg=BG)
+        param_frame.pack(fill="x", pady=(0, 20))
+        
         def param(parent, label, col, default, var_name):
             tk.Label(parent, text=label, bg=BG, fg=TEXT_MUTED,
-                     font=("Segoe UI", 10)).grid(row=0, column=col*2, padx=(20,4), sticky="e")
+                    font=("Segoe UI", 10)).grid(row=0, column=col*2, padx=(0,8), sticky="e")
             sv = tk.StringVar(value=default)
             e = tk.Entry(parent, textvariable=sv, bg=SURFACE2, fg=YELLOW,
-                         font=FONT_MONO, relief="flat", bd=4, width=12)
-            e.grid(row=0, column=col*2+1, padx=(0,10))
+                        font=FONT_MONO, relief="flat", bd=4, width=12)
+            e.grid(row=0, column=col*2+1, padx=(0,20))
             setattr(self, var_name, sv)
+        
+        param(param_frame, "Tolerancia:", 0, "1e-8", "sv_tol")
+        param(param_frame, "Máx. iter:", 1, "500", "sv_maxiter")
+        param(param_frame, "Omega (ω):", 2, "1.0", "sv_omega")
+        
+        # Execute button
+        btn = tk.Button(frame, text="▶  EJECUTAR MÉTODO",
+                       bg=ACCENT, fg="#1e1e2e", font=("Segoe UI", 12, "bold"),
+                       relief="flat", bd=0, padx=20, pady=10,
+                       activebackground="#5a7fee", cursor="hand2",
+                       command=self._ejecutar_solucionador)
+        btn.pack(pady=15)
+        
+        # Result frame
+        self.solver_result_frame = tk.Frame(frame, bg=BG)
+        self.solver_result_frame.pack(fill="both", expand=True, pady=(15, 0))
+    
+    def _ejecutar_solucionador(self):
+        """Execute the fixed-point method with user-provided parameters.
+        
+        Reads input values, validates them, constructs the G function,
+        executes the numerical method, and displays results.
+        """
+        for widget in self.solver_result_frame.winfo_children():
+            widget.destroy()
+        
+        try:
+            expr_g1 = self.sv_g1.get().strip()
+            expr_g2 = self.sv_g2.get().strip()
+            x0_val = float(self.sv_x0.get())
+            y0_val = float(self.sv_y0.get())
+            tol = float(self.sv_tol.get())
+            maxiter = int(self.sv_maxiter.get())
+            omega = float(self.sv_omega.get())
+        except ValueError as e:
+            messagebox.showerror("Error", f"Parámetro inválido: {e}")
+            return
+        
+        try:
+            G = build_G(expr_g1, expr_g2)
+            x0 = np.array([x0_val, y0_val])
+            _ = G(x0)
+        except Exception as e:
+            messagebox.showerror("Error", f"Error en función G: {e}")
+            return
+        
+        # Execute method
+        try:
+            sol, errores, historial, iters, convergio = punto_fijo_sistema(
+                G, x0, tol=tol, max_iter=maxiter, omega=omega)
+        except Exception as e:
+            messagebox.showerror("Error", f"Error en iteración: {e}")
+            return
+        
+        # Save results
+        self.last_solution = sol
+        self.last_errors = errores
+        self.last_historial = historial
+        
+        # Display summary
+        result_frame = tk.Frame(self.solver_result_frame, bg=SURFACE, relief="flat", bd=0)
+        result_frame.pack(fill="x", padx=16, pady=10)
+        
+        estado = "✓ CONVERGIÓ" if convergio else "✗ No convergió"
+        color = ACCENT2 if convergio else RED_ERR
+        
+        resumen = f"""
+{estado} en {iters} iteraciones
+Error final: {errores[-1]:.2e}
 
-        param(frame_params, "Tolerancia:", 0, "1e-8",  "sv_tol")
-        param(frame_params, "Máx. iter:",  1, "500",   "sv_maxiter")
-        param(frame_params, "Omega (ω):",  2, "1.0",   "sv_omega")
-
-        # ─ botón ─
-        btn = tk.Button(p, text="  ▶  EJECUTAR MÉTODO  ",
-                        bg=ACCENT, fg="#1e1e2e", font=("Segoe UI", 12, "bold"),
-                        relief="flat", bd=0, padx=20, pady=10,
-                        activebackground="#5a7fee", cursor="hand2",
-                        command=self.ejecutar)
-        btn.pack(pady=20)
-
-        # ─ ejemplo rápido ─
-        tk.Label(p, text="Ejemplos rápidos:", bg=BG, fg=TEXT_MUTED,
-                 font=("Segoe UI", 10, "bold")).pack(anchor="w", padx=20)
-        ejemplos_frame = tk.Frame(p, bg=BG)
-        ejemplos_frame.pack(fill="x", padx=20)
-        ejemplos = [
-            ("Ej 1: Cuadrático",    "sqrt(1 - y)",       "sqrt(1 - x)",       "0.5", "0.5"),
-            ("Ej 2: Círculo/Parábola","sqrt(4 - y**2)",  "x**2 - 1",          "1.5", "0.5"),
-            ("Ej 3: Exponencial",   "2 / exp(y)",        "3 / exp(x)",        "0.5", "0.9"),
-        ]
-        for i, (name, g1, g2, x0, y0) in enumerate(ejemplos):
-            def cargar(g1=g1, g2=g2, x0=x0, y0=y0):
-                self.sv_g1.set(g1); self.sv_g2.set(g2)
-                self.sv_x0.set(x0); self.sv_y0.set(y0)
-            tk.Button(ejemplos_frame, text=name, bg=SURFACE, fg=TEXT,
-                      font=("Segoe UI", 9), relief="flat", bd=0, padx=10, pady=5,
-                      cursor="hand2", command=cargar).grid(row=0, column=i, padx=6, pady=4)
-
-    # ── TAB 2 — Pasos ─────────────────────────────────────
-    def _build_tab_pasos(self):
-        p = self.tab_pasos
-        self.txt_pasos = scrolledtext.ScrolledText(
-            p, bg="#11111b", fg=TEXT, font=FONT_MONO,
-            insertbackground=TEXT, relief="flat", bd=0,
-            wrap="none", state="disabled")
-        self.txt_pasos.pack(fill="both", expand=True, padx=10, pady=10)
-        # tags de color
-        self.txt_pasos.tag_config("titulo",    foreground=ACCENT,   font=("Consolas", 11, "bold"))
-        self.txt_pasos.tag_config("ok",        foreground=ACCENT2)
-        self.txt_pasos.tag_config("warn",      foreground=YELLOW)
-        self.txt_pasos.tag_config("error",     foreground=RED_ERR)
-        self.txt_pasos.tag_config("iter_head", foreground=TEXT_MUTED, font=("Consolas", 9))
-        self.txt_pasos.tag_config("iter_row",  foreground=TEXT,       font=("Consolas", 10))
-
-    def _pasos_write(self, text, tag=""):
-        self.txt_pasos.config(state="normal")
-        self.txt_pasos.insert("end", text, tag)
-        self.txt_pasos.config(state="disabled")
-        self.txt_pasos.see("end")
-
-    def _pasos_clear(self):
-        self.txt_pasos.config(state="normal")
-        self.txt_pasos.delete("1.0", "end")
-        self.txt_pasos.config(state="disabled")
-
-    # ── TAB 3 — Resultado ─────────────────────────────────
-    def _build_tab_resultado(self):
-        p = self.tab_resultado
-        p.columnconfigure(0, weight=1)
-        p.columnconfigure(1, weight=1)
-        p.rowconfigure(0, weight=1)
-
-        # panel izquierdo: métricas
-        left = tk.Frame(p, bg=SURFACE, bd=0)
-        left.grid(row=0, column=0, sticky="nsew", padx=(10,5), pady=10)
-        tk.Label(left, text="Resumen", bg=SURFACE, fg=ACCENT,
-                 font=FONT_HEAD).pack(anchor="w", padx=14, pady=(12,4))
-        self.lbl_resumen = tk.Label(left, text="—", bg=SURFACE, fg=TEXT,
-                                     font=("Consolas", 11), justify="left",
-                                     anchor="nw", wraplength=420)
-        self.lbl_resumen.pack(anchor="nw", padx=14, pady=6, fill="x")
-
-        # panel derecho: gráfica embebida
-        right = tk.Frame(p, bg=BG)
-        right.grid(row=0, column=1, sticky="nsew", padx=(5,10), pady=10)
-        self.fig_frame = right
-        self.canvas_widget = None
-
-    def _mostrar_grafica(self, errores, historial, sol, convergio, iters):
-        # limpiar canvas anterior
-        if self.canvas_widget:
-            self.canvas_widget.get_tk_widget().destroy()
-
-        fig, axes = plt.subplots(1, 2, figsize=(8, 3.8),
-                                 facecolor="#11111b")
+Solución:
+  x* = {sol[0]:.10f}
+  y* = {sol[1]:.10f}
+        """.strip()
+        
+        tk.Label(result_frame, text=resumen, bg=SURFACE, fg=color,
+                font=("Consolas", 10), justify="left",
+                anchor="nw").pack(padx=12, pady=8, fill="x")
+        
+        # View graph button
+        btn_graph = tk.Button(self.solver_result_frame, text="📈  Ver Gráfica",
+                             bg=ACCENT, fg="#1e1e2e", font=("Segoe UI", 10, "bold"),
+                             relief="flat", bd=0, padx=15, pady=8,
+                             activebackground="#5a7fee", cursor="hand2",
+                             command=self._mostrar_grafica_solucionador)
+        btn_graph.pack(pady=10)
+    
+    def _mostrar_grafica_solucionador(self):
+        """Display convergence graph in the solver section.
+        
+        Shows error convergence plot and iterative trajectory plot.
+        Includes button to expand graph in separate window.
+        """
+        if self.last_solution is None:
+            messagebox.showwarning("Advertencia", "Ejecuta el método primero")
+            return
+        
+        for widget in self.solver_result_frame.winfo_children():
+            widget.destroy()
+        
+        # Button frame
+        btn_frame = tk.Frame(self.solver_result_frame, bg=BG)
+        btn_frame.pack(fill="x", pady=10)
+        
+        btn_expand = tk.Button(btn_frame, text="🔍 Ampliar Gráfica",
+                              bg=ACCENT, fg="#1e1e2e", font=("Segoe UI", 10, "bold"),
+                              relief="flat", bd=0, padx=15, pady=8,
+                              activebackground="#5a7fee", cursor="hand2",
+                              command=self._ampliar_grafica_solucionador)
+        btn_expand.pack(side="left", padx=10)
+        
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4),
+                                facecolor="#11111b")
         fig.subplots_adjust(wspace=0.35)
-
-        color_conv = "#a6e3a1" if convergio else "#f38ba8"
-
-        # subplot 1: convergencia
+        
+        # Convergence plot
         ax1 = axes[0]
         ax1.set_facecolor("#1e1e2e")
-        ax1.semilogy(range(1, len(errores)+1), errores,
-                     color=ACCENT, linewidth=1.8, marker='o', markersize=2)
+        ax1.semilogy(range(1, len(self.last_errors)+1), self.last_errors,
+                    color=ACCENT, linewidth=1.8, marker='o', markersize=2)
         ax1.set_title("Convergencia del Error", color=TEXT, fontsize=9)
         ax1.set_xlabel("Iteración", color=TEXT_MUTED, fontsize=8)
         ax1.set_ylabel("Error (norma ∞)", color=TEXT_MUTED, fontsize=8)
@@ -294,19 +396,16 @@ class AppPuntoFijo(tk.Tk):
         for spine in ax1.spines.values():
             spine.set_edgecolor("#313149")
         ax1.grid(True, alpha=0.2, color=TEXT_MUTED)
-        ax1.axhline(y=float(self.sv_tol.get()), color=RED_ERR,
-                    linestyle='--', alpha=0.6, linewidth=1, label=f"tol")
-        ax1.legend(fontsize=7, facecolor=SURFACE, labelcolor=TEXT)
-
-        # subplot 2: trayectoria (x1 vs x2)
+        
+        # Trajectory plot
         ax2 = axes[1]
         ax2.set_facecolor("#1e1e2e")
-        hist = np.array(historial)
+        hist = np.array(self.last_historial)
         ax2.plot(hist[:, 0], hist[:, 1], 'o--',
-                 color=ACCENT, linewidth=1.2, markersize=3, alpha=0.7,
-                 label="Trayectoria")
-        ax2.plot(sol[0], sol[1], '*', color=color_conv,
-                 markersize=14, label=f"Solución\n({sol[0]:.5f}, {sol[1]:.5f})")
+                color=ACCENT, linewidth=1.2, markersize=3, alpha=0.7,
+                label="Trayectoria")
+        ax2.plot(self.last_solution[0], self.last_solution[1], '*',
+                color=ACCENT2, markersize=14, label="Solución")
         ax2.set_title("Trayectoria Iterativa", color=TEXT, fontsize=9)
         ax2.set_xlabel("x", color=TEXT_MUTED, fontsize=8)
         ax2.set_ylabel("y", color=TEXT_MUTED, fontsize=8)
@@ -315,160 +414,358 @@ class AppPuntoFijo(tk.Tk):
             spine.set_edgecolor("#313149")
         ax2.grid(True, alpha=0.2, color=TEXT_MUTED)
         ax2.legend(fontsize=7, facecolor=SURFACE, labelcolor=TEXT)
-
-        canvas = FigureCanvasTkAgg(fig, master=self.fig_frame)
+        
+        if self.canvas_widget:
+            self.canvas_widget.get_tk_widget().destroy()
+        
+        canvas = FigureCanvasTkAgg(fig, master=self.solver_result_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True, pady=10)
+        self.canvas_widget = canvas
+        self.fig_cache = fig
+    
+    def _ampliar_grafica_solucionador(self):
+        """Open expanded graph in a new window.
+        
+        Creates a separate toplevel window with larger plots for
+        better visualization of convergence and trajectory.
+        """
+        if self.last_solution is None:
+            messagebox.showwarning("Advertencia", "Ejecuta el método primero")
+            return
+        
+        top = tk.Toplevel(self)
+        top.title("Gráfica Ampliada")
+        top.geometry("1200x600")
+        top.configure(bg=BG)
+        
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6),
+                                facecolor="#11111b")
+        fig.subplots_adjust(wspace=0.35)
+        
+        # Convergence
+        ax1 = axes[0]
+        ax1.set_facecolor("#1e1e2e")
+        ax1.semilogy(range(1, len(self.last_errors)+1), self.last_errors,
+                    color=ACCENT, linewidth=2.5, marker='o', markersize=4)
+        ax1.set_title("Convergencia del Error", color=TEXT, fontsize=14, fontweight='bold')
+        ax1.set_xlabel("Iteración", color=TEXT_MUTED, fontsize=12)
+        ax1.set_ylabel("Error (norma ∞)", color=TEXT_MUTED, fontsize=12)
+        ax1.tick_params(colors=TEXT_MUTED, labelsize=10)
+        for spine in ax1.spines.values():
+            spine.set_edgecolor("#313149")
+        ax1.grid(True, alpha=0.2, color=TEXT_MUTED)
+        
+        # Trajectory
+        ax2 = axes[1]
+        ax2.set_facecolor("#1e1e2e")
+        hist = np.array(self.last_historial)
+        ax2.plot(hist[:, 0], hist[:, 1], 'o--',
+                color=ACCENT, linewidth=2, markersize=5, alpha=0.7,
+                label="Trayectoria")
+        ax2.plot(self.last_solution[0], self.last_solution[1], '*',
+                color=ACCENT2, markersize=20, label="Solución")
+        ax2.set_title("Trayectoria Iterativa", color=TEXT, fontsize=14, fontweight='bold')
+        ax2.set_xlabel("x", color=TEXT_MUTED, fontsize=12)
+        ax2.set_ylabel("y", color=TEXT_MUTED, fontsize=12)
+        ax2.tick_params(colors=TEXT_MUTED, labelsize=10)
+        for spine in ax2.spines.values():
+            spine.set_edgecolor("#313149")
+        ax2.grid(True, alpha=0.2, color=TEXT_MUTED)
+        ax2.legend(fontsize=10, facecolor=SURFACE, labelcolor=TEXT)
+        
+        canvas = FigureCanvasTkAgg(fig, master=top)
         canvas.draw()
         canvas.get_tk_widget().pack(fill="both", expand=True)
-        self.canvas_widget = canvas
-
-        # guardar PNG en carpeta Graficas/
-        base = os.path.dirname(os.path.abspath(__file__))
-        graficas_dir = os.path.join(base, "Graficas")
-        os.makedirs(graficas_dir, exist_ok=True)
-        ruta = os.path.join(graficas_dir, "Grafica_usuario.png")
-        fig.savefig(ruta, dpi=150, bbox_inches='tight',
-                    facecolor=fig.get_facecolor())
-        self.set_status(f"Gráfica guardada → {ruta}", "ok")
-
-    # ── lógica principal ──────────────────────────────────
-    def ejecutar(self):
-        self._pasos_clear()
-        self.nb.select(1)   # ir a pestaña Pasos
-
-        expr_g1  = self.sv_g1.get().strip()
-        expr_g2  = self.sv_g2.get().strip()
-
+    
+    def _section_examples(self):
+        """Display the predefined examples section.
+        
+        Shows cards for each predefined example with description,
+        formulas, and execution button.
+        """
+        frame = tk.Frame(self.content_frame, bg=BG)
+        frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        tk.Label(frame, text="Ejemplos Predefinidos", bg=BG, fg=ACCENT,
+                font=FONT_HEAD).pack(anchor="w", pady=(0, 20))
+        
+        for name, data in EJEMPLOS.items():
+            self._crear_tarjeta_ejemplo(frame, name, data)
+    
+    def _crear_tarjeta_ejemplo(self, parent, name, data):
+        """Create an example card with description and execution button.
+        
+        Args:
+            parent: Parent frame for the card
+            name: Name of the example
+            data: Dictionary containing example data (desc, g1, g2, x0, y0, omega)
+        """
+        card = tk.Frame(parent, bg=SURFACE, relief="flat", bd=0)
+        card.pack(fill="x", pady=10)
+        
+        # Header
+        hdr = tk.Frame(card, bg=SURFACE2)
+        hdr.pack(fill="x")
+        tk.Label(hdr, text=name, bg=SURFACE2, fg=ACCENT,
+                font=("Segoe UI", 11, "bold")).pack(anchor="w", padx=12, pady=8)
+        
+        # Description
+        tk.Label(card, text=data["desc"], bg=SURFACE, fg=TEXT_MUTED,
+                font=("Segoe UI", 10), justify="left").pack(anchor="w", padx=12, pady=4)
+        
+        # Formulas
+        fmla = f"G₁(x,y) = {data['g1']}\nG₂(x,y) = {data['g2']}"
+        tk.Label(card, text=fmla, bg=SURFACE, fg=ACCENT,
+                font=("Consolas", 9), justify="left").pack(anchor="w", padx=12, pady=4)
+        
+        # Execute button
+        btn = tk.Button(card, text="▶  Ejecutar este ejemplo",
+                       bg=ACCENT, fg="#1e1e2e", font=("Segoe UI", 10),
+                       relief="flat", bd=0, padx=15, pady=8,
+                       activebackground="#5a7fee", cursor="hand2",
+                       command=lambda: self._ejecutar_ejemplo(name, data))
+        btn.pack(pady=8, padx=12)
+    
+    def _ejecutar_ejemplo(self, name, data):
+        """Execute a predefined example.
+        
+        Args:
+            name: Name of the example
+            data: Dictionary containing example parameters
+        """
         try:
-            x0_val = float(self.sv_x0.get())
-            y0_val = float(self.sv_y0.get())
-            tol    = float(self.sv_tol.get())
-            maxiter= int(self.sv_maxiter.get())
-            omega  = float(self.sv_omega.get())
-        except ValueError as e:
-            messagebox.showerror("Error de parámetros", str(e))
-            return
-
-        # ─ paso 1: mostrar sistema ─
-        self._pasos_write("═"*60 + "\n", "titulo")
-        self._pasos_write(" PASO 1 — Sistema ingresado\n", "titulo")
-        self._pasos_write("═"*60 + "\n", "titulo")
-        self._pasos_write(f"  G₁(x, y) = {expr_g1}\n", "ok")
-        self._pasos_write(f"  G₂(x, y) = {expr_g2}\n", "ok")
-        self._pasos_write(f"  x⁽⁰⁾ = ({x0_val}, {y0_val})\n")
-        self._pasos_write(f"  Tolerancia = {tol},  Máx iter = {maxiter},  ω = {omega}\n\n")
-
-        # ─ construir G ─
-        try:
-            G = build_G(expr_g1, expr_g2)
-            x0 = np.array([x0_val, y0_val])
-            _ = G(x0)  # test
-        except Exception as e:
-            self._pasos_write(f"\n  ✗ Error al evaluar G: {e}\n", "error")
-            messagebox.showerror("Error en la función", str(e))
-            return
-
-        # ─ paso 2: norma jacobiana ─
-        self._pasos_write("═"*60 + "\n", "titulo")
-        self._pasos_write(" PASO 2 — Verificación de convergencia (Jacobiana)\n", "titulo")
-        self._pasos_write("═"*60 + "\n", "titulo")
-        try:
-            norm_J, J = norma_jacobiana(G, x0)
-            self._pasos_write(f"  Jacobiana de G en x⁽⁰⁾ (diferencias finitas):\n", "warn")
-            self._pasos_write(f"    J[0,0]={J[0,0]:+.6f}  J[0,1]={J[0,1]:+.6f}\n")
-            self._pasos_write(f"    J[1,0]={J[1,0]:+.6f}  J[1,1]={J[1,1]:+.6f}\n\n")
-            self._pasos_write(f"  ‖J_G‖∞ = {norm_J:.6f}\n")
-            if norm_J < 1:
-                self._pasos_write(f"  → Criterio CUMPLIDO (‖J‖∞ < 1) — convergencia garantizada ✓\n\n", "ok")
-            else:
-                self._pasos_write(f"  → Criterio NO cumplido (‖J‖∞ ≥ 1) — se intentará con ω={omega}\n\n", "warn")
-        except Exception as e:
-            self._pasos_write(f"  (No se pudo calcular la Jacobiana: {e})\n\n", "warn")
-
-        # ─ paso 3: iteraciones ─
-        self._pasos_write("═"*60 + "\n", "titulo")
-        self._pasos_write(" PASO 3 — Iteraciones\n", "titulo")
-        self._pasos_write("═"*60 + "\n", "titulo")
-        self._pasos_write(f"  {'k':>5}  {'x':>14}  {'y':>14}  {'Error':>14}\n", "iter_head")
-        self._pasos_write("  " + "-"*54 + "\n", "iter_head")
-
-        # ejecutar método
-        try:
+            G = build_G(data["g1"], data["g2"])
+            x0 = np.array([data["x0"], data["y0"]])
             sol, errores, historial, iters, convergio = punto_fijo_sistema(
-                G, x0, tol=tol, max_iter=maxiter, omega=omega)
+                G, x0, tol=1e-8, max_iter=500, omega=data["omega"])
+            
+            self.last_solution = sol
+            self.last_errors = errores
+            self.last_historial = historial
+            
+            # Show result
+            msg = f"✓ Convergió en {iters} iteraciones\n\n"
+            msg += f"Solución:\n  x* = {sol[0]:.10f}\n  y* = {sol[1]:.10f}"
+            messagebox.showinfo(name, msg)
+            
+            # Go to visualizations
+            self._show_section("visualizations")
         except Exception as e:
-            self._pasos_write(f"\n  ✗ Error durante la iteración: {e}\n", "error")
+            messagebox.showerror("Error", str(e))
+    
+    def _section_visualizations(self):
+        """Display the visualizations section.
+        
+        Shows convergence and trajectory plots if a computation has been
+        performed. Includes button to expand graphs.
+        """
+        frame = tk.Frame(self.content_frame, bg=BG)
+        frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        tk.Label(frame, text="Visualizaciones", bg=BG, fg=ACCENT,
+                font=FONT_HEAD).pack(anchor="w", pady=(0, 15))
+        
+        if self.last_solution is None:
+            tk.Label(frame, text="Ejecuta el método primero para generar gráficas.",
+                    bg=BG, fg=TEXT_MUTED, font=("Segoe UI", 10)).pack(pady=50)
             return
+        
+        # Button frame
+        btn_frame = tk.Frame(frame, bg=BG)
+        btn_frame.pack(fill="x", pady=(0, 15))
+        
+        btn_expand = tk.Button(btn_frame, text="🔍 Ampliar Gráfica",
+                              bg=ACCENT, fg="#1e1e2e", font=("Segoe UI", 10, "bold"),
+                              relief="flat", bd=0, padx=15, pady=8,
+                              activebackground="#5a7fee", cursor="hand2",
+                              command=self._ampliar_grafica_visualizaciones)
+        btn_expand.pack(side="left", padx=10)
+        
+        # Graph
+        fig, axes = plt.subplots(1, 2, figsize=(10, 4.5),
+                                facecolor="#11111b")
+        fig.subplots_adjust(wspace=0.35)
+        
+        # Convergence
+        ax1 = axes[0]
+        ax1.set_facecolor("#1e1e2e")
+        ax1.semilogy(range(1, len(self.last_errors)+1), self.last_errors,
+                    color=ACCENT, linewidth=1.8, marker='o', markersize=2)
+        ax1.set_title("Convergencia del Error", color=TEXT, fontsize=10)
+        ax1.set_xlabel("Iteración", color=TEXT_MUTED, fontsize=9)
+        ax1.set_ylabel("Error (norma ∞)", color=TEXT_MUTED, fontsize=9)
+        ax1.tick_params(colors=TEXT_MUTED, labelsize=8)
+        for spine in ax1.spines.values():
+            spine.set_edgecolor("#313149")
+        ax1.grid(True, alpha=0.2, color=TEXT_MUTED)
+        
+        # Trajectory
+        ax2 = axes[1]
+        ax2.set_facecolor("#1e1e2e")
+        hist = np.array(self.last_historial)
+        ax2.plot(hist[:, 0], hist[:, 1], 'o--',
+                color=ACCENT, linewidth=1.2, markersize=3, alpha=0.7,
+                label="Trayectoria")
+        ax2.plot(self.last_solution[0], self.last_solution[1], '*',
+                color=ACCENT2, markersize=14, label="Solución")
+        ax2.set_title("Trayectoria Iterativa", color=TEXT, fontsize=10)
+        ax2.set_xlabel("x", color=TEXT_MUTED, fontsize=9)
+        ax2.set_ylabel("y", color=TEXT_MUTED, fontsize=9)
+        ax2.tick_params(colors=TEXT_MUTED, labelsize=8)
+        for spine in ax2.spines.values():
+            spine.set_edgecolor("#313149")
+        ax2.grid(True, alpha=0.2, color=TEXT_MUTED)
+        ax2.legend(fontsize=8, facecolor=SURFACE, labelcolor=TEXT)
+        
+        canvas = FigureCanvasTkAgg(fig, master=frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+    
+    def _ampliar_grafica_visualizaciones(self):
+        """Open expanded visualization graph in a new window.
+        
+        Creates a separate toplevel window with larger plots for
+        better visualization of convergence and trajectory.
+        """
+        if self.last_solution is None:
+            messagebox.showwarning("Advertencia", "Ejecuta el método primero")
+            return
+        
+        top = tk.Toplevel(self)
+        top.title("Gráfica Ampliada - Visualizaciones")
+        top.geometry("1200x600")
+        top.configure(bg=BG)
+        
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6),
+                                facecolor="#11111b")
+        fig.subplots_adjust(wspace=0.35)
+        
+        # Convergence
+        ax1 = axes[0]
+        ax1.set_facecolor("#1e1e2e")
+        ax1.semilogy(range(1, len(self.last_errors)+1), self.last_errors,
+                    color=ACCENT, linewidth=2.5, marker='o', markersize=4)
+        ax1.set_title("Convergencia del Error", color=TEXT, fontsize=14, fontweight='bold')
+        ax1.set_xlabel("Iteración", color=TEXT_MUTED, fontsize=12)
+        ax1.set_ylabel("Error (norma ∞)", color=TEXT_MUTED, fontsize=12)
+        ax1.tick_params(colors=TEXT_MUTED, labelsize=10)
+        for spine in ax1.spines.values():
+            spine.set_edgecolor("#313149")
+        ax1.grid(True, alpha=0.2, color=TEXT_MUTED)
+        
+        # Trajectory
+        ax2 = axes[1]
+        ax2.set_facecolor("#1e1e2e")
+        hist = np.array(self.last_historial)
+        ax2.plot(hist[:, 0], hist[:, 1], 'o--',
+                color=ACCENT, linewidth=2, markersize=5, alpha=0.7,
+                label="Trayectoria")
+        ax2.plot(self.last_solution[0], self.last_solution[1], '*',
+                color=ACCENT2, markersize=20, label="Solución")
+        ax2.set_title("Trayectoria Iterativa", color=TEXT, fontsize=14, fontweight='bold')
+        ax2.set_xlabel("x", color=TEXT_MUTED, fontsize=12)
+        ax2.set_ylabel("y", color=TEXT_MUTED, fontsize=12)
+        ax2.tick_params(colors=TEXT_MUTED, labelsize=10)
+        for spine in ax2.spines.values():
+            spine.set_edgecolor("#313149")
+        ax2.grid(True, alpha=0.2, color=TEXT_MUTED)
+        ax2.legend(fontsize=10, facecolor=SURFACE, labelcolor=TEXT)
+        
+        canvas = FigureCanvasTkAgg(fig, master=top)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill="both", expand=True)
+    
+    def _section_settings(self):
+        """Display the configuration section.
+        
+        Shows information about numerical parameters, convergence criteria,
+        and recommended parameter ranges.
+        """
+        frame = tk.Frame(self.content_frame, bg=BG)
+        frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        tk.Label(frame, text="Configuración", bg=BG, fg=ACCENT,
+                font=FONT_HEAD).pack(anchor="w", pady=(0, 20))
+        
+        settings_text = """
+PARÁMETROS PREDETERMINADOS:
 
-        MAX_MOSTRAR = 50
-        for i, (h, err) in enumerate(zip(historial[1:], errores)):
-            if i < MAX_MOSTRAR:
-                self._pasos_write(
-                    f"  {i+1:>5}  {h[0]:>14.8f}  {h[1]:>14.8f}  {err:>14.2e}\n",
-                    "iter_row")
-        if iters > MAX_MOSTRAR:
-            self._pasos_write(f"\n  ... ({iters - MAX_MOSTRAR} iteraciones omitidas) ...\n\n", "iter_head")
-            h_last = historial[-1]
-            self._pasos_write(
-                f"  {iters:>5}  {h_last[0]:>14.8f}  {h_last[1]:>14.8f}  {errores[-1]:>14.2e}\n",
-                "iter_row")
+• Tolerancia (tol): Criterio de convergencia
+  Valor por defecto: 1e-8
+  Rango recomendado: 1e-12 a 1e-4
 
-        # ─ paso 4: resultado ─
-        self._pasos_write("\n" + "═"*60 + "\n", "titulo")
-        self._pasos_write(" PASO 4 — Resultado final\n", "titulo")
-        self._pasos_write("═"*60 + "\n", "titulo")
-        if convergio:
-            self._pasos_write(f"  ✓ CONVERGIÓ en {iters} iteraciones\n", "ok")
-        else:
-            self._pasos_write(f"  ✗ NO convergió en {iters} iteraciones (última aprox.)\n", "error")
-        self._pasos_write(f"  x* ≈ {sol[0]:.10f}\n", "ok")
-        self._pasos_write(f"  y* ≈ {sol[1]:.10f}\n", "ok")
-        try:
-            Gsol = G(sol)
-            res_x = abs(Gsol[0] - sol[0])
-            res_y = abs(Gsol[1] - sol[1])
-            self._pasos_write(f"\n  Verificación  |G₁(x*,y*) - x*| = {res_x:.2e}\n")
-            self._pasos_write(f"                |G₂(x*,y*) - y*| = {res_y:.2e}\n")
-        except:
-            pass
+• Máximo de iteraciones: Límite de iteraciones
+  Valor por defecto: 500
+  Rango recomendado: 100 a 1000
 
-        # ─ actualizar pestaña Resultado ─
-        estado = "CONVERGIÓ" if convergio else "No convergió"
-        color_estado = ACCENT2 if convergio else RED_ERR
-        resumen = (
-            f"Estado:      {estado}\n"
-            f"Iteraciones: {iters}\n"
-            f"Error final: {errores[-1]:.2e}\n"
-            f"Tolerancia:  {tol}\n"
-            f"Omega (ω):   {omega}\n\n"
-            f"Solución aproximada:\n"
-            f"  x* = {sol[0]:.10f}\n"
-            f"  y* = {sol[1]:.10f}\n\n"
-            f"G₁(x, y) = {expr_g1}\n"
-            f"G₂(x, y) = {expr_g2}"
-        )
-        self.lbl_resumen.config(text=resumen, fg=color_estado if not convergio else TEXT)
-        self._mostrar_grafica(errores, historial, sol, convergio, iters)
-        self.nb.select(2)   # ir a pestaña Resultado
-        self.set_status(f"Listo — {'convergió' if convergio else 'no convergió'} en {iters} iteraciones", "ok" if convergio else "warn")
+• Omega (ω): Factor de relajación
+  Valor por defecto: 1.0
+  Rango: 0 < ω ≤ 1
+  Si ‖J‖∞ ≥ 1, usar ω < 1 para mejorar convergencia
 
-    # ── barra de estado ───────────────────────────────────
-    def _build_statusbar(self):
-        bar = tk.Frame(self, bg="#11111b", height=26)
-        bar.pack(fill="x", side="bottom")
-        self.lbl_status = tk.Label(bar, text="Listo", bg="#11111b",
-                                    fg=TEXT_MUTED, font=("Segoe UI", 9),
-                                    anchor="w")
-        self.lbl_status.pack(side="left", padx=12)
+CRITERIO DE CONVERGENCIA:
+  El método converge si ‖J_G‖∞ < 1, donde J_G es la Jacobiana.
+  
+  Si ‖J‖∞ ≥ 1:
+  • Verificar la función G(x)
+  • Usar factor de relajación ω < 1
+  • Cambiar punto inicial x₀
+        """
+        
+        txt = tk.Label(frame, text=settings_text, bg=BG, fg=TEXT,
+                      font=("Consolas", 9), justify="left",
+                      wraplength=900)
+        txt.pack(anchor="nw", pady=20)
+    
+    def _section_about(self):
+        """Display the about section with application information.
+        
+        Shows description, technology stack, and features of the application.
+        """
+        frame = tk.Frame(self.content_frame, bg=BG)
+        frame.pack(fill="both", expand=True, padx=20, pady=20)
+        
+        tk.Label(frame, text="Acerca de", bg=BG, fg=ACCENT,
+                font=FONT_HEAD).pack(anchor="w", pady=(0, 20))
+        
+        about_text = """
+MÉTODO DEL PUNTO FIJO
 
-    def set_status(self, msg, kind=""):
-        colors = {"ok": ACCENT2, "warn": YELLOW, "error": RED_ERR, "": TEXT_MUTED}
-        self.lbl_status.config(text=msg, fg=colors.get(kind, TEXT_MUTED))
+Institución: Universidad Distrital Francisco José de Caldas
+Asignatura: Métodos Numéricos
+Periodo: 2026-1
+
+DESCRIPCIÓN:
+Aplicación para resolver sistemas de ecuaciones no lineales 
+mediante el método del punto fijo (fixed-point iteration).
+
+TECNOLOGÍA:
+• Python 3.x
+• Tkinter (GUI)
+• NumPy (Cálculos numéricos)
+• Matplotlib (Visualización)
+
+CARACTERÍSTICAS:
+✓ Interfaz intuitiva y moderna
+✓ Ejecución bajo demanda (sin gráficas automáticas)
+✓ Análisis de convergencia mediante Jacobiana
+✓ Ejemplos predefinidos
+✓ Visualización de trayectorias e iteraciones
+✓ Parámetros personalizables
+        """
+        
+        txt = tk.Label(frame, text=about_text, bg=BG, fg=TEXT,
+                      font=("Consolas", 9), justify="left",
+                      wraplength=900, anchor="nw")
+        txt.pack(pady=20, fill="both", expand=True)
 
 
-# ── punto de entrada ──────────────────────────────────────
-def lanzar_interfaz():
-    app = AppPuntoFijo()
-    app.mainloop()
-
-if __name__ == "__main__":
-    lanzar_interfaz()
+def launch_interface():
+    """Launch the graphical interface application.
+    
+    Returns:
+        MainApplication instance
+    """
+    app = MainApplication()
+    return app
